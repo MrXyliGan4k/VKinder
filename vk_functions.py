@@ -94,21 +94,17 @@ def get_user(user_id, chat_id):
 
     :return возвращает информацию о пользователе
     """
-
-    user = vk_group.method('users.get',
-                           {
-                               'user_ids': user_id,
-                               'fields': 'bdate, sex, city, home_town, relation, photo_50, photo_id'
-                           })[0]
-
-    while user['first_name'] == 'DELETED':
-        send_message(chat_id=chat_id, text='Не правильный id\nВведите id пользователя')
-        user_id, chat_id = longpoll_listen()
+    try:
         user = vk_group.method('users.get',
                                {
                                    'user_ids': user_id,
                                    'fields': 'bdate, sex, city, home_town, relation, photo_50, photo_id'
                                })[0]
+    except:
+        raise Exception('какая-то ошибка')
+
+    if user['first_name'].lower() == 'deleted' or user == []:
+        raise Exception('неправильно введен id пользователя')
 
     user_info = {
         'user_id': user_id,
@@ -120,8 +116,7 @@ def get_user(user_id, chat_id):
         'sex',
         'city' if 'city' in user else 'home_town',
         'relation',
-        'photo_id',
-        'photo_50'
+        'photo_id'
     ]
 
     for key in keys:
@@ -157,20 +152,20 @@ def show_user(user, chat_id):
         0: 'не указано'
     }
     send_message(chat_id=chat_id,
-                 text=f"id: {user[1]}\n"
-                      f"Имя: {user[2]}\n"
-                      f"Фамилия: {user[3]}\n"
-                      f"Возраст: {user[4]}\n"
-                      f"Город: {user[6]}\n"
-                      f"Семейное положение: {relation[user[7]]}",
-                 attachment=f'photo{user[8]}')
+                 text=f"id: {user['user_id']}\n"
+                      f"Имя: {user['first_name']}\n"
+                      f"Фамилия: {user['last_name']}\n"
+                      f"Возраст: {user['bdate']}\n"
+                      f"Город: {user.get('city', 'home_town')}\n"
+                      f"Семейное положение: {relation[user['relation']]}",
+                 attachment=f"photo{user['photo_id']}")
 
 
-def search_contacts(filters, offset=0):
+def search_contacts(user, offset=0):
     """ Ищет пользователей по критериям
 
-    :param filters: фильтр с критериями
-    :type filters: dict
+    :param user: пользователь с критериями
+    :type user: dict
 
     :return возвращает список найденых пользователей
     """
@@ -182,24 +177,51 @@ def search_contacts(filters, offset=0):
                                   'offset': offset,
                                   'sort': 1,
                                   'age_from': 18,
-                                  'age_to': filters[4],
-                                  'sex': '1' if filters[5] == '2' else '2',
-                                  'hometown': filters[6],
-                                  'status': filters[7],
+                                  'age_to': user['bdate'],
+                                  'sex': 1 if user['sex'] == 2 else 2,
+                                  'hometown': user.get('city', 'home_town'),
+                                  'status': user['relation'],
                                   'has_photo': 1,
                                   'fields': 'bdate, sex, city, home_town, status'
-                              })
+                              })['items']
 
-    for contact in contacts['items']:
+    for contact in contacts:
         if contact['is_closed'] == False and ('city' in contact or 'home_town' in contact):
             contacts_list.append(
                 {
                     'user_id': contact['id'],
                     'first_name': contact['first_name'],
                     'last_name': contact['last_name'],
-                    'city': contact['city']['title'].capitalize() if 'city' in contact else contact['home_town'].capitalize(),
                     'link': f'https://vk.com/id{contact["id"]}'
                 })
+    return contacts_list
+
+
+def get_contacts(contacts, chat_id):
+    """ Получает информацию о понравшиеся контактах
+
+    :param contacts: контакты
+    :type contacts: list
+
+    :param chat_id: id чата
+    :type chat_id: str
+
+    :return возвращает информацию о понравшиеся контактах
+    """
+
+    ids = [contact[0] for contact in contacts]
+
+    contacts = vk_group.method('users.get', {'user_ids': ','.join(ids)})
+    contacts_list = []
+
+    for contact in contacts:
+        contacts_list.append(
+            {
+                'user_id': contact['id'],
+                'first_name': contact['first_name'],
+                'last_name': contact['last_name'],
+                'link': f'https://vk.com/id{contact["id"]}'
+            })
     return contacts_list
 
 

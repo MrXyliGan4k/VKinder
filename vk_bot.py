@@ -1,6 +1,6 @@
 from config import USER_TOKEN, GROUP_TOKEN, PASSWORD
 from vk_functions import *
-from db import User, Viewed, Contact, Photos
+from db import User, Viewed, Contact
 
 import vk_api
 from vk_api.longpoll import VkLongPoll, VkEventType
@@ -41,20 +41,18 @@ def check_user(chat_id):
     response_id, chat_id = longpoll_listen()
 
     user = user_db.select_user(user_id=response_id)
+    user_info = get_user(user_id=response_id, chat_id=chat_id)
 
     if not user:
         send_message(chat_id=chat_id, text='Такого пользователя нет в бд', keyboard=keyboard)
         response, chat_id = longpoll_listen()
+        if response != 'создать':
+            raise Exception('не нажата кнопка создать')
 
-        while response != 'создать':
-            send_message(chat_id=chat_id, text='Неверная команда', keyboard=keyboard)
-            response, chat_id = longpoll_listen()
-
-        user = get_user(user_id=response_id, chat_id=chat_id)
-        user_db.add_user(user)
+        user_db.add_user(user_id=response_id)
         send_message(chat_id=chat_id, text='Пользователь создан')
-        user = user_db.select_user(user_id=response_id)
-    return user[0]
+
+    return user_info
 
 
 def create_keyboard(keyboard_contact):
@@ -89,12 +87,21 @@ def search(chat_id):
     """
 
     keyboard = create_keyboard(keyboard_contact=('нравится', 'далее', VkKeyboardColor.POSITIVE))
-    user = check_user(chat_id=chat_id)
-    user_id = user[1]
-    offset = user[-1]
+    try:
+        user = check_user(chat_id=chat_id)
+    except Exception as error:
+        send_message(chat_id=chat_id, text=error)
+        menu(chat_id=chat_id)
+        return
+    offset = user_db.select_user(user_id=user['user_id'])[0][-1]
 
     while True:
-        contacts = search_contacts(filters=user, offset=offset)
+        contacts = search_contacts(user=user, offset=offset)
+        if not contacts:
+            send_message(chat_id=chat_id, text='Нет пользователей')
+            menu(chat_id=chat_id)
+            return
+
         send_message(chat_id=chat_id,
                      text=f'Найдено пользователей: {len(contacts)}',
                      keyboard=keyboard[0])
@@ -103,7 +110,7 @@ def search(chat_id):
         if response == 'показать':
             for contact in contacts:
                 offset += 1
-                user_db.update_user(user_id=user_id, offset=offset)
+                user_db.update_user(user_id=user['user_id'], offset=offset)
 
                 viewed_contact = viewed_db.select_contact(contact_id=contact['user_id'])
                 if viewed_contact:
@@ -112,15 +119,15 @@ def search(chat_id):
 
                 contact_photos = get_photos(contact_id=contact['user_id'])
                 send_message(chat_id=chat_id,
-                             text=f'Имя: {contact["first_name"]}\n'
-                                  f'Ссылка: {contact["link"]}',
+                             text=f"Имя: {contact['first_name']}\n"
+                                  f"Фамилия: {contact['last_name']}\n"
+                                  f"Ссылка: {contact['link']}",
                              attachment=','.join(contact_photos[0]),
                              keyboard=keyboard[1])
                 response, chat_id = longpoll_listen()
 
                 if response == 'нравится':
-                    contact_db.add_contact(contact=contact, user_id=user_id)
-                    photos_db.add_photos(photos=contact_photos[1], contact_id=contact['user_id'])
+                    contact_db.add_contact(contact=contact, user_id=user['user_id'])
 
             send_message(chat_id=chat_id, text='Конец поиска\nХотите еще посмотреть?', keyboard=keyboard[2])
             response, chat_id = longpoll_listen()
@@ -136,8 +143,12 @@ def profile(chat_id):
     :param chat_id: id чата
     :type chat_id: str
     """
-
-    user = check_user(chat_id=chat_id)
+    try:
+        user = check_user(chat_id=chat_id)
+    except Exception as error:
+        send_message(chat_id=chat_id, text=error)
+        menu(chat_id=chat_id)
+        return
     show_user(user=user, chat_id=chat_id)
     menu(chat_id=chat_id)
 
@@ -150,28 +161,38 @@ def show_contacts(chat_id):
     """
 
     keyboard = create_keyboard(keyboard_contact=('удалить из бд', 'далее', VkKeyboardColor.NEGATIVE))
-    user = check_user(chat_id=chat_id)
+    try:
+        user = check_user(chat_id=chat_id)
+    except Exception as error:
+        send_message(chat_id=chat_id, text=error)
+        menu(chat_id=chat_id)
+        return
 
-    user_id = user[1]
+    contacts = contact_db.select_contact(user_id=user['user_id'])
+    if not contacts:
+        send_message(chat_id=chat_id, text='Нет пользователей')
+        menu(chat_id=chat_id)
+        return
 
-    contacts = contact_db.select_contact(user_id=user_id)
     send_message(chat_id=chat_id,
                  text=f'Найдено пользователей: {len(contacts)}',
                  keyboard=keyboard[0])
     response, chat_id = longpoll_listen()
 
     if response == 'показать':
+        contacts = get_contacts(contacts=contacts, chat_id=chat_id)
         for contact in contacts:
-            contact_photos = photos_db.select_photos(contact_id=contact[1])
+            contact_photos = get_photos(contact_id=contact['user_id'])
             send_message(chat_id=chat_id,
-                         text=f'Имя: {contact[2]}\n'
-                              f'Ссылка: {contact[5]}',
+                         text=f"Имя: {contact['first_name']}\n"
+                              f"Фамилия: {contact['last_name']}\n"
+                              f"Ссылка: {contact['link']}",
                          attachment=','.join(contact_photos[0]),
                          keyboard=keyboard[1])
             response, chat_id = longpoll_listen()
 
             if response == 'удалить из бд':
-                contact_db.delete_contact(contact_id=contact[1])
+                contact_db.delete_contact(contact_id=contact['user_id'])
     menu(chat_id=chat_id)
 
 
@@ -185,7 +206,6 @@ if __name__ == '__main__':
     user_db = User(database='vkinder', password=PASSWORD)
     viewed_db = Viewed(database='vkinder', password=PASSWORD)
     contact_db = Contact(database='vkinder', password=PASSWORD)
-    photos_db = Photos(database='vkinder', password=PASSWORD)
 
     while True:
         global_command, user_id = longpoll_listen()
@@ -197,5 +217,6 @@ if __name__ == '__main__':
             show_contacts(chat_id=user_id)
         else:
             menu(chat_id=user_id, text='Привет, меня зовут VKinder')
+
 
 
