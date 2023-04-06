@@ -87,21 +87,12 @@ def search(chat_id):
     """
 
     keyboard = create_keyboard(keyboard_contact=('нравится', 'далее', VkKeyboardColor.POSITIVE))
-    try:
-        user = check_user(chat_id=chat_id)
-    except Exception as error:
-        send_message(chat_id=chat_id, text=error)
-        menu(chat_id=chat_id)
-        return
-    offset = user_db.select_user(user_id=user['user_id'])[0][-1]
+
+    user = check_user(chat_id=chat_id)
+    id, user_id, offset = user_db.select_user(user_id=user['user_id'])[0]
 
     while True:
         contacts = search_contacts(user=user, offset=offset)
-        if not contacts:
-            send_message(chat_id=chat_id, text='Нет пользователей')
-            menu(chat_id=chat_id)
-            return
-
         send_message(chat_id=chat_id,
                      text=f'Найдено пользователей: {len(contacts)}',
                      keyboard=keyboard[0])
@@ -109,31 +100,27 @@ def search(chat_id):
 
         if response == 'показать':
             for contact in contacts:
-                offset += 1
-                user_db.update_user(user_id=user['user_id'], offset=offset)
-
-                viewed_contact = viewed_db.select_contact(contact_id=contact['user_id'])
-                if viewed_contact:
+                if viewed_db.select_contact(contact_id=contact['user_id'], user_id=user['user_id']):
                     continue
-                viewed_db.add_contact(contact_id=contact['user_id'])
+                viewed_db.add_contact(contact_id=contact['user_id'], user_id=user_id)
+                offset += 1
+                user_db.update_user(user_id=user_id, offset=offset)
 
                 contact_photos = get_photos(contact_id=contact['user_id'])
                 send_message(chat_id=chat_id,
                              text=f"Имя: {contact['first_name']}\n"
                                   f"Фамилия: {contact['last_name']}\n"
-                                  f"Ссылка: {contact['link']}",
-                             attachment=','.join(contact_photos[0]),
+                                  f"Ссылка: {contact['link']}\n"
+                                  f"Фото: {contact_photos if not isinstance(contact_photos, list) else len(contact_photos)}",
+                             attachment=','.join(contact_photos),
                              keyboard=keyboard[1])
                 response, chat_id = longpoll_listen()
-
                 if response == 'нравится':
-                    contact_db.add_contact(contact=contact, user_id=user['user_id'])
+                    contact_db.add_contact(contact=contact, user_id=user_id)
 
             send_message(chat_id=chat_id, text='Конец поиска\nХотите еще посмотреть?', keyboard=keyboard[2])
             response, chat_id = longpoll_listen()
-
             if response == 'нет':
-                menu(chat_id=chat_id)
                 return
 
 
@@ -143,14 +130,8 @@ def profile(chat_id):
     :param chat_id: id чата
     :type chat_id: str
     """
-    try:
-        user = check_user(chat_id=chat_id)
-    except Exception as error:
-        send_message(chat_id=chat_id, text=error)
-        menu(chat_id=chat_id)
-        return
+    user = check_user(chat_id=chat_id)
     show_user(user=user, chat_id=chat_id)
-    menu(chat_id=chat_id)
 
 
 def show_contacts(chat_id):
@@ -161,39 +142,30 @@ def show_contacts(chat_id):
     """
 
     keyboard = create_keyboard(keyboard_contact=('удалить из бд', 'далее', VkKeyboardColor.NEGATIVE))
-    try:
-        user = check_user(chat_id=chat_id)
-    except Exception as error:
-        send_message(chat_id=chat_id, text=error)
-        menu(chat_id=chat_id)
-        return
 
-    contacts = contact_db.select_contact(user_id=user['user_id'])
-    if not contacts:
-        send_message(chat_id=chat_id, text='Нет пользователей')
-        menu(chat_id=chat_id)
-        return
+    user = check_user(chat_id=chat_id)
+    id, user_id, offset = user_db.select_user(user_id=user['user_id'])[0]
 
+    contacts_select = contact_db.select_contact(user_id=user_id)
+    contacts = get_contacts(contacts=contacts_select, chat_id=chat_id)
     send_message(chat_id=chat_id,
                  text=f'Найдено пользователей: {len(contacts)}',
                  keyboard=keyboard[0])
     response, chat_id = longpoll_listen()
 
     if response == 'показать':
-        contacts = get_contacts(contacts=contacts, chat_id=chat_id)
         for contact in contacts:
             contact_photos = get_photos(contact_id=contact['user_id'])
             send_message(chat_id=chat_id,
                          text=f"Имя: {contact['first_name']}\n"
                               f"Фамилия: {contact['last_name']}\n"
-                              f"Ссылка: {contact['link']}",
-                         attachment=','.join(contact_photos[0]),
+                              f"Ссылка: {contact['link']}\n"
+                              f"Фото: {contact_photos if not isinstance(contact_photos, list) else len(contact_photos)}",
+                         attachment=','.join(contact_photos),
                          keyboard=keyboard[1])
             response, chat_id = longpoll_listen()
-
             if response == 'удалить из бд':
                 contact_db.delete_contact(contact_id=contact['user_id'])
-    menu(chat_id=chat_id)
 
 
 if __name__ == '__main__':
@@ -209,14 +181,15 @@ if __name__ == '__main__':
 
     while True:
         global_command, user_id = longpoll_listen()
-        if global_command == '/search' or global_command == 'поиск':
-            search(chat_id=user_id)
-        elif global_command == '/profile' or global_command == 'профиль':
-            profile(chat_id=user_id)
-        elif global_command == '/like' or global_command == 'понравшиеся пользователи':
-            show_contacts(chat_id=user_id)
-        else:
-            menu(chat_id=user_id, text='Привет, меня зовут VKinder')
-
+        try:
+            if global_command == '/search' or global_command == 'поиск':
+                search(chat_id=user_id)
+            elif global_command == '/profile' or global_command == 'профиль':
+                profile(chat_id=user_id)
+            elif global_command == '/like' or global_command == 'понравшиеся пользователи':
+                show_contacts(chat_id=user_id)
+        except Exception as error:
+            send_message(chat_id=user_id, text=error)
+        menu(chat_id=user_id)
 
 
